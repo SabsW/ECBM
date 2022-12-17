@@ -1,4 +1,4 @@
-# ECBM
+# ECBM Final Project
 ECBM final project by Sabrina Wang, Derek Ning, and Christopher Lung
 December 2022
 
