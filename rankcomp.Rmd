@@ -1,0 +1,180 @@
+---
+title: "geo"
+output: html_document
+date: "2022-12-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+setwd("~/Documents/Columbia/ECBM/final/")
+DATA <- "~/Documents/Columbia/ECBM/final/data"
+```
+
+```{r}
+# query the Geo database
+library(GEOquery)
+gds18842 <- getGEO("GSE18842")
+exp <- data.frame(exprs(gds18842$GSE18842_series_matrix.txt.gz))
+
+
+```
+
+
+
+```{r}
+# query and build up meta data
+meta<- data.frame(gds18842$GSE18842_series_matrix.txt.gz$geo_accession)
+colnames(meta)[1] <- "SAMPID"
+meta$type <- gds18842$GSE18842_series_matrix.txt.gz$`sample type:ch1`
+meta$tumor <- case_when((meta$type == "tumor") ~ "1", (meta$type == "control") ~ "0")
+meta$tissue <- gds18842$GSE18842_series_matrix.txt.gz$title
+# find unpaired samples and exclude them
+unpaired <- meta[str_detect(meta$tissue, "NP"),]$SAMPID
+meta <- meta %>% filter(!str_detect(meta$tissue, "NP"))
+
+
+# query and build up expression data
+exp <- exp %>% select(-all_of(unpaired))
+label <- meta$tumor
+gene_entrez <- gds18842[["GSE18842_series_matrix.txt.gz"]]@featureData@data[["ENTREZ_GENE_ID"]]
+gene_df <- data.frame(gene_entrez)
+gene_name <- gds18842[["GSE18842_series_matrix.txt.gz"]]@featureData@data[["Gene Symbol"]]
+gene_name_df <- data.frame(gene_name)
+
+
+
+
+
+```
+
+```{r}
+# export expression data, gene id and sample labels to be used in RankComp
+write.table(exp, file = "data/18842/exp.txt", append = FALSE, sep = ",", row.names = TRUE, quote=FALSE)
+write.table(label, file = "data/18842/label.txt", append = FALSE, sep = ",", col.names = FALSE, row.names = FALSE, quote=FALSE)
+write.table(gene_entrez, file = "data/18842/gene.txt", append = FALSE, sep = ",", row.names = FALSE, col.names = FALSE, quote=FALSE)
+
+write.table(label, file = "data/18842/label2.txt", append = FALSE, sep = ",", col.names = TRUE, row.names = TRUE, quote=FALSE)
+write.table(gene_entrez, file = "data/18842/gene2.txt", append = FALSE, sep = ",", row.names = TRUE, col.names = TRUE, quote=FALSE)
+
+write.table(meta, file = "data/18842/meta.txt", append = FALSE, sep = ",", row.names = TRUE, col.names = TRUE, quote=FALSE)
+```
+
+```{r}
+# plot figure 1
+exp_genename <- exp
+exp_genename$gene <- gene_name
+plot_df <- data.frame(exp_genename %>% filter(gene_name %in% c("GCKR", "GATA1")) %>% group_by(gene) %>% summarise_if(is.numeric, mean, na.rm = TRUE))
+rownames(plot_df) <- plot_df$gene
+plot_df <- plot_df[,!(names(plot_df)) == "gene"]
+plot_df <- data.frame(t(plot_df))
+plot_df$tumor <- meta$tumor
+plot_df$type <- meta$type
+plot_df$subject <- rownames(plot_df)
+plot_df_tumor <- plot_df %>% filter(tumor==1)
+plot_df_healthy <- plot_df %>% filter(tumor==0)
+plot_df
+
+ggplot(plot_df_tumor, aes(x=subject)) + geom_point(aes(y=GCKR, color="GCKR")) + geom_line(aes(y=GCKR, color="GCKR", group=1)) + geom_point(aes(y=GATA1, color="GATA1")) + geom_line(aes(y=GATA1, color="GATA1", group=1)) + theme(axis.text.x=element_blank()) + labs(x="Subjects", y="Intensity")
+```
+```{r}
+ggplot(plot_df_healthy, aes(x=subject)) + geom_point(aes(y=GCKR, color="GCKR")) + geom_line(aes(y=GCKR, color="GCKR", group=1)) + geom_point(aes(y=GATA1, color="GATA1")) + geom_line(aes(y=GATA1, color="GATA1", group=1)) + theme(axis.text.x=element_blank()) + labs(x="Subjects", y="Intensity")
+```
+```{r}
+ggplot(plot_df, aes(x=subject)) + geom_point(aes(y=GCKR, color="GCKR")) + geom_line(aes(y=GCKR, color="GCKR", group=1)) + geom_point(aes(y=GATA1, color="GATA1")) + geom_line(aes(y=GATA1, color="GATA1", group=1)) + theme(axis.text.x=element_blank()) + labs(x="Subjects", y="Intensity") + facet_wrap(~type)
+```
+
+```{r}
+# library(edgeR)
+# # create and pre-process dgelist object
+# dgelist <- DGEList(exp, group=NULL, remove.zeros = T, samples=meta, genes=rownames(exp))
+# dim(dgelist)
+# design <- model.matrix(~ tumor, data=meta)
+# head(design)
+# keep <- filterByExpr(dgelist, design=design)
+# dgelist <- dgelist[keep,,keep.lib.sizes=FALSE]
+# dgelist <- calcNormFactors(dgelist, method="TMM")
+# dgelist <- estimateDisp(dgelist, design)
+# plotBCV(dgelist)
+# 
+# fit <- glmQLFit(dgelist_paired, design_paired)
+# qlf <- glmQLFTest(fit)
+# toptags <- as.data.frame(topTags(qlf, n=Inf, p.value = 0.05))
+# toptags
+
+```
+
+
+```{r}
+# load in data from RankComp
+pval <- data.frame(fread(file.path(DATA, "pval_list.txt")), check.names = FALSE)
+
+regulation <- data.frame(fread(file.path(DATA, "regulation_list.txt")), check.names = FALSE)
+
+```
+
+```{r}
+# clean up RankComp results to get significant genes
+pval$gene <- gene_name
+regulation$gene <- gene_name
+pval <- pval[,!(names(pval) %in% c("V1", "gene"))]
+regulation <- regulation[,!(names(regulation) %in% c("V1", "gene"))]
+
+mean_p <- data.frame(mean_p = rowMeans(pval), gene = gene_name, regulation = rowSums(regulation))
+# mean_p$gene <- gene_name
+# mean_p$regulation <- rowSums(regulation)
+sig_p <- mean_p %>% filter(regulation %in% c(44, -44) & mean_p < 0.05)
+
+top_downreg <- sig_p %>% filter(regulation == -44) %>% arrange(mean_p)
+top_upreg <- sig_p %>% filter(regulation == 44) %>% arrange(mean_p)
+
+```
+
+```{r}
+# load in the toptags from edgeR dgelist (executed elsewhere)
+toptags <- data.frame(fread(file.path(DATA, "toptags.txt")), check.names = FALSE)
+gene_name_df$code <- rownames(exp)
+toptags_name <- merge(x = toptags,y=gene_name_df, by.x = "V1", by.y = "code")
+edger_upreg <- toptags_name %>% filter(logFC > 0) %>% arrange(FDR)
+edger_downreg <- toptags_name %>% filter(logFC < 0) %>% arrange(FDR)
+```
+
+```{r}
+# build up dataframes to compare top differentially expressed genes
+downreg_compare <- data.frame(edger_genes = edger_downreg[1:10,]$gene_name, rankcomp_genes = top_downreg[1:10,]$gene)
+downreg_overlap <- Reduce(intersect,list(downreg_compare$edger_genes, downreg_compare$rankcomp_genes))
+
+upreg_compare <- data.frame(edger_genes = edger_upreg[1:10,]$gene_name, rankcomp_genes = top_upreg[1:10,]$gene)
+upreg_overlap <- Reduce(intersect,list(upreg_compare$edger_genes, upreg_compare$rankcomp_genes))
+
+top10 <- data.frame(downreg = top_downreg[1:10,]$gene, upreg = top_upreg[1:10,]$gene)
+```
+
+```{r}
+# draw figures comparing the top 3 upregulated genes in tumour and healthy samples
+top3 <- top_upreg[1:3,]$gene
+plotdf2 <- data.frame(exp_genename %>% filter(gene %in% top3) %>% group_by(gene) %>% summarise_if(is.numeric, mean, na.rm = TRUE))
+rownames(plotdf2) <- plotdf2$gene
+plotdf2 <- plotdf2[,!(names(plotdf2)) == "gene"]
+plotdf2 <- data.frame(t(plotdf2))
+plotdf2$tumor <- meta$tumor
+plotdf2$type <- meta$type
+plotdf2$subject <- rownames(plotdf2)
+plotdf2_tumor <- plotdf2 %>% filter(tumor==1)
+plotdf2_healthy <- plotdf2 %>% filter(tumor==0)
+
+ggplot(plotdf2, aes(x=subject)) + geom_point(aes(y=NEK2, color="NEK2")) + geom_line(aes(y=NEK2, color="NEK2", group=1)) + geom_point(aes(y=TOP2A, color="TOP2A")) + geom_line(aes(y=TOP2A, color="TOP2A", group=1)) + geom_point(aes(y=TTK, color="TTK")) + geom_line(aes(y=TTK, color="TTK", group=1)) + theme(axis.text.x=element_blank()) + labs(x="Subjects", y="Intensity") + facet_wrap(~type)
+```
+
+
